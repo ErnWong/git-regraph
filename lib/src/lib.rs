@@ -1,4 +1,4 @@
-use git2::{Commit, Reference, Signature, Tree};
+use git2::{Commit, Reference, Repository, Signature, Tree};
 use std::fs::File;
 
 pub enum RefArg<'a> {
@@ -36,8 +36,14 @@ pub struct CommitEdit<'a> {
     committer: SignatureEdit<'a>,
 }
 
-pub fn regraph(refs_to_update: RefArg, commit_to_edit: Commit, edit: CommitEdit) {
-    todo!();
+pub trait RepositoryExt {
+    fn regraph(&self, refs_to_update: RefArg, commit_to_edit: Commit, edit: CommitEdit);
+}
+
+impl RepositoryExt for Repository {
+    fn regraph(&self, refs_to_update: RefArg, commit_to_edit: Commit, edit: CommitEdit) {
+        todo!();
+    }
 }
 
 #[cfg(test)]
