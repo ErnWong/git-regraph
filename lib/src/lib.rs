@@ -1,5 +1,4 @@
-use git2::{Commit, Reference, Repository, Signature, Tree};
-use std::fs::File;
+use git2::{Commit, Oid, Reference, Repository, Signature, Tree};
 
 #[derive(Debug)]
 pub enum Error {
@@ -76,6 +75,26 @@ impl<'a> CommitEdit<'a> {
         self.committer = Some(committer);
         self
     }
+
+    fn create_edited_commit(&self, repo: &Repository, original: &Commit) -> Result<Oid, Error> {
+        Ok(repo.commit(
+            None,
+            self.author.unwrap_or(&original.author()),
+            self.committer.unwrap_or(&original.committer()),
+            self.message.unwrap_or(
+                original
+                    .message()
+                    .ok_or(Error::OriginalMessageNotValidUtf8)?,
+            ),
+            self.tree.unwrap_or(&original.tree()?),
+            self.parents.unwrap_or(
+                &original
+                    .parents()
+                    .collect::<Vec<Commit>>()
+                    .iter()
+                    .collect::<Vec<&Commit>>(),
+            ),
+        )?)
     }
 }
 
@@ -95,7 +114,19 @@ impl RepositoryExt for Repository {
         commit_to_edit: &Commit,
         edit: &CommitEdit,
     ) -> Result<(), Error> {
-        todo!();
+        fn update_affected_commits() {
+            todo!();
+        }
+
+        fn update_refs() {
+            todo!();
+        }
+
+        edit.create_edited_commit(self, &commit_to_edit)?;
+        update_affected_commits();
+        update_refs();
+
+        Ok(())
     }
 }
 
