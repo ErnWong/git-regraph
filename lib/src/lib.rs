@@ -4,6 +4,7 @@ use git2::{Commit, Oid, Reference, Repository, Signature, Tree};
 pub enum Error {
     Git2Error(git2::Error),
     OriginalMessageNotValidUtf8,
+    NoChange,
 }
 
 impl From<git2::Error> for Error {
@@ -355,6 +356,12 @@ mod tests {
     #[test]
     #[ignore]
     fn it_leaves_remote_refs_untouched() {
+        todo!();
+    }
+
+    #[test]
+    #[ignore]
+    fn it_errors_when_edit_does_no_change() {
         todo!();
     }
 }
