@@ -1,64 +1,30 @@
 use git2::{Commit, Reference, Repository, Signature, Tree};
 use std::fs::File;
 
+#[derive(Debug)]
+pub enum Error {
+    Git2Error(git2::Error),
+    OriginalMessageNotValidUtf8,
+}
+
+impl From<git2::Error> for Error {
+    fn from(error: git2::Error) -> Self {
+        Error::Git2Error(error)
+    }
+}
+
 pub enum RefArg<'a> {
     AllLocalRefs,
     Refs(&'a [Reference<'a>]),
 }
 
-pub enum ParentsEdit<'a> {
-    KeepParents,
-    SetParents(&'a [&'a Commit<'a>]),
-    AddParents(&'a [&'a Commit<'a>]),
-}
-
-impl<'a> Default for ParentsEdit<'a> {
-    fn default() -> Self {
-        Self::KeepParents
-    }
-}
-
-pub enum MessageEdit<'a> {
-    KeepMessage,
-    SetParagraphs(&'a [&'a str]),
-    SetFile(&'a File),
-}
-
-impl<'a> Default for MessageEdit<'a> {
-    fn default() -> Self {
-        Self::KeepMessage
-    }
-}
-
-pub enum TreeEdit<'a> {
-    KeepTree,
-    SetTree(&'a Tree<'a>),
-}
-
-impl<'a> Default for TreeEdit<'a> {
-    fn default() -> Self {
-        Self::KeepTree
-    }
-}
-
-pub enum SignatureEdit<'a> {
-    KeepSignature,
-    SetSignature(&'a Signature<'a>),
-}
-
-impl<'a> Default for SignatureEdit<'a> {
-    fn default() -> Self {
-        Self::KeepSignature
-    }
-}
-
 #[derive(Default)]
 pub struct CommitEdit<'a> {
-    parents: ParentsEdit<'a>,
-    message: MessageEdit<'a>,
-    tree: TreeEdit<'a>,
-    author: SignatureEdit<'a>,
-    committer: SignatureEdit<'a>,
+    parents: Option<&'a [&'a Commit<'a>]>,
+    message: Option<&'a str>,
+    tree: Option<&'a Tree<'a>>,
+    author: Option<&'a Signature<'a>>,
+    committer: Option<&'a Signature<'a>>,
 }
 
 impl<'a> CommitEdit<'a> {
@@ -66,90 +32,69 @@ impl<'a> CommitEdit<'a> {
         Self::default()
     }
 
-    pub fn set_parents(self, parents: &'a [&'a Commit<'a>]) -> Self {
+    pub fn edit_parents<'s>(&'s mut self, parents: &'a [&'a Commit<'a>]) -> &'s mut Self {
         assert!(
-            matches!(self.parents, ParentsEdit::KeepParents),
+            self.parents.is_none(),
             "Overwriting previous intent to modify parents"
         );
-        Self {
-            parents: ParentsEdit::SetParents(parents),
-            ..self
-        }
+        self.parents = Some(parents);
+        self
     }
 
-    pub fn add_parents(self, parents: &'a [&'a Commit<'a>]) -> Self {
+    pub fn edit_message<'s>(&'s mut self, message: &'a str) -> &'s mut Self {
         assert!(
-            matches!(self.parents, ParentsEdit::KeepParents),
-            "Overwriting previous intent to modify parents"
-        );
-        Self {
-            parents: ParentsEdit::AddParents(parents),
-            ..self
-        }
-    }
-
-    pub fn set_paragraphs(self, paragraphs: &'a [&'a str]) -> Self {
-        assert!(
-            matches!(self.message, MessageEdit::KeepMessage),
+            self.message.is_none(),
             "Overwriting previous intent to modify message"
         );
-        Self {
-            message: MessageEdit::SetParagraphs(paragraphs),
-            ..self
-        }
+        self.message = Some(message);
+        self
     }
 
-    pub fn set_file(self, file: &'a File) -> Self {
+    pub fn edit_tree<'s>(&'s mut self, tree: &'a Tree<'a>) -> &'s mut Self {
         assert!(
-            matches!(self.message, MessageEdit::KeepMessage),
-            "Overwriting previous intent to modify message"
-        );
-        Self {
-            message: MessageEdit::SetFile(file),
-            ..self
-        }
-    }
-
-    pub fn set_tree(self, tree: &'a Tree<'a>) -> Self {
-        assert!(
-            matches!(self.tree, TreeEdit::KeepTree),
+            self.tree.is_none(),
             "Overwriting previous intent to modify tree"
         );
-        Self {
-            tree: TreeEdit::SetTree(tree),
-            ..self
-        }
+        self.tree = Some(tree);
+        self
     }
 
-    pub fn set_author(self, author: &'a Signature<'a>) -> Self {
+    pub fn edit_author<'s>(&'s mut self, author: &'a Signature<'a>) -> &'s mut Self {
         assert!(
-            matches!(self.author, SignatureEdit::KeepSignature),
+            self.author.is_none(),
             "Overwriting previous intent to modify author"
         );
-        Self {
-            author: SignatureEdit::SetSignature(author),
-            ..self
-        }
+        self.author = Some(author);
+        self
     }
 
-    pub fn set_committer(self, committer: &'a Signature<'a>) -> Self {
+    pub fn edit_committer<'s>(&'s mut self, committer: &'a Signature<'a>) -> &'s mut Self {
         assert!(
-            matches!(self.committer, SignatureEdit::KeepSignature),
+            self.committer.is_none(),
             "Overwriting previous intent to modify committer"
         );
-        Self {
-            committer: SignatureEdit::SetSignature(committer),
-            ..self
-        }
+        self.committer = Some(committer);
+        self
+    }
     }
 }
 
 pub trait RepositoryExt {
-    fn regraph(&self, refs_to_update: RefArg, commit_to_edit: Commit, edit: CommitEdit);
+    fn regraph(
+        &self,
+        refs_to_update: RefArg,
+        commit_to_edit: &Commit,
+        edit: &CommitEdit,
+    ) -> Result<(), Error>;
 }
 
 impl RepositoryExt for Repository {
-    fn regraph(&self, refs_to_update: RefArg, commit_to_edit: Commit, edit: CommitEdit) {
+    fn regraph(
+        &self,
+        refs_to_update: RefArg,
+        commit_to_edit: &Commit,
+        edit: &CommitEdit,
+    ) -> Result<(), Error> {
         todo!();
     }
 }
@@ -254,10 +199,12 @@ mod tests {
         // WHEN we squash B-C by removing parents of C.
         repo.regraph(
             RefArg::AllLocalRefs,
-            repo.find_commit(*label_to_commit_oid.get("C").unwrap())
+            &repo
+                .find_commit(*label_to_commit_oid.get("C").unwrap())
                 .unwrap(),
-            CommitEdit::new().set_parents(&[]),
-        );
+            CommitEdit::new().edit_parents(&[]),
+        )
+        .unwrap();
         let commits = label_to_commit_reachable_from_ref(&repo, "HEAD");
 
         // THEN
