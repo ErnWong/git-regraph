@@ -139,6 +139,7 @@ mod tests {
 
     fn given_repository<'a>(
         graph: &[(&'a str, i64, &[&str])],
+        branches: &[(&str, &str)],
     ) -> (Repository, HashMap<&'a str, Oid>) {
         fn add_commit<'a, 'b>(
             dir: &TempDir,
@@ -162,15 +163,8 @@ mod tests {
                 .find_tree(index.write_tree().map_err(|e| e.to_string()).unwrap())
                 .unwrap();
             let parents_refs: Vec<&Commit> = parents.iter().collect();
-            repo.commit(
-                Some("HEAD"),
-                &author,
-                &committer,
-                label,
-                &tree,
-                &parents_refs,
-            )
-            .unwrap()
+            repo.commit(None, &author, &committer, label, &tree, &parents_refs)
+                .unwrap()
         }
         let dir = tempdir().unwrap();
         let repo = Repository::init(&dir).unwrap();
@@ -193,6 +187,12 @@ mod tests {
             let commit_oid = add_commit(&dir, &mut index, &repo, label, *time, &parent_commits);
 
             label_to_commit_oid.insert(*label, commit_oid);
+        }
+        for (branch_name, target) in branches {
+            let commit = repo
+                .find_commit(*label_to_commit_oid.get(target).unwrap())
+                .unwrap();
+            repo.branch(branch_name, &commit, true).unwrap();
         }
         (repo, label_to_commit_oid)
     }
@@ -219,13 +219,16 @@ mod tests {
     #[test]
     fn it_can_squash_to_root() {
         // GIVEN a repo...
-        let (repo, label_to_commit_oid) = given_repository(&[
-            ("A", 0, &[]),         // With main root.
-            ("B", 1, &[]),         // With subtree root.
-            ("C", 2, &["B"]),      // With more than one commit in subtree.
-            ("D", 3, &["A", "C"]), // With subtree merged into main.
-            ("E", 4, &["D"]),      // With commit after merge.
-        ]);
+        let (repo, label_to_commit_oid) = given_repository(
+            &[
+                ("A", 0, &[]),         // With main root.
+                ("B", 1, &[]),         // With subtree root.
+                ("C", 2, &["B"]),      // With more than one commit in subtree.
+                ("D", 3, &["A", "C"]), // With subtree merged into main.
+                ("E", 4, &["D"]),      // With commit after merge.
+            ],
+            &[("master", "E")],
+        );
 
         // WHEN we squash B-C by removing parents of C.
         repo.regraph(
