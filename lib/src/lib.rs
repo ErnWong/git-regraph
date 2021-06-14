@@ -351,4 +351,10 @@ mod tests {
     fn it_can_swap_trees() {
         todo!();
     }
+
+    #[test]
+    #[ignore]
+    fn it_leaves_remote_refs_untouched() {
+        todo!();
+    }
 }
