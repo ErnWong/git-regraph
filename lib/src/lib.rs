@@ -1,4 +1,5 @@
-use git2::{Commit, Oid, Reference, Repository, Signature, Tree};
+use git2::{Commit, Oid, Reference, Repository, Signature, Sort, Tree};
+use std::collections::HashMap;
 
 #[derive(Debug)]
 pub enum Error {
@@ -15,7 +16,16 @@ impl From<git2::Error> for Error {
 
 pub enum RefArg<'a> {
     AllLocalRefs,
-    Refs(&'a [Reference<'a>]),
+    Refs(Vec<Reference<'a>>),
+}
+
+impl<'a> RefArg<'a> {
+    pub fn resolve(self, repo: &'a Repository) -> Result<Vec<Reference>, Error> {
+        Ok(match self {
+            RefArg::AllLocalRefs => repo.references()?.collect::<Result<_, _>>()?,
+            RefArg::Refs(refs) => refs,
+        })
+    }
 }
 
 #[derive(Default)]
@@ -115,17 +125,106 @@ impl RepositoryExt for Repository {
         commit_to_edit: &Commit,
         edit: &CommitEdit,
     ) -> Result<(), Error> {
-        fn update_affected_commits() {
-            todo!();
+        fn discover_old_commits(
+            repo: &Repository,
+            resolved_refs_to_update: &[Reference],
+            edited_commit_oid: Oid,
+        ) -> Result<Vec<Oid>, Error> {
+            let mut revwalk = repo.revwalk()?;
+            revwalk.set_sorting(Sort::TOPOLOGICAL)?;
+
+            for reference in resolved_refs_to_update.iter() {
+                let reference_name = reference.name().ok_or(Error::OriginalMessageNotValidUtf8)?;
+                revwalk.push_ref(reference_name)?;
+            }
+            revwalk.hide(edited_commit_oid)?;
+
+            // TODO: We collect into a new vector rather than iterating them in-place, because I'm
+            // not sure if editing the git graph while iterating through the RevWalk will
+            // invalidate the iterator. This could potentially be better optimised.
+            Ok(revwalk.collect::<Result<_, _>>()?)
         }
 
-        fn update_refs() {
-            todo!();
+        fn update_affected_commits(
+            repo: &Repository,
+            old_commit_oids: &[Oid],
+            old_to_new_oids: &mut HashMap<Oid, Oid>,
+        ) -> Result<(), Error> {
+            for old_oid in old_commit_oids {
+                let commit = repo.find_commit(*old_oid)?;
+
+                let needs_updating = commit
+                    .parent_ids()
+                    .any(|oid| old_to_new_oids.contains_key(&oid));
+
+                if needs_updating {
+                    let parents: Vec<Commit> = commit
+                        .parent_ids()
+                        .map(|oid| *old_to_new_oids.get(&oid).unwrap_or(&oid))
+                        .map(|oid| repo.find_commit(oid.clone()))
+                        .collect::<Result<_, _>>()?;
+                    let parents_ref: Vec<&Commit> = parents.iter().collect();
+
+                    let new_oid = repo.commit(
+                        None,
+                        &commit.author(),
+                        &commit.committer(),
+                        commit.message().ok_or(Error::OriginalMessageNotValidUtf8)?,
+                        &commit.tree()?,
+                        &parents_ref,
+                    )?;
+
+                    old_to_new_oids.insert(*old_oid, new_oid);
+                }
+            }
+            Ok(())
         }
 
-        edit.create_edited_commit(self, &commit_to_edit)?;
-        update_affected_commits();
-        update_refs();
+        fn update_refs(
+            resolved_refs_to_update: &[Reference],
+            old_edited_oid: &Oid,
+            new_edited_oid: &Oid,
+            old_to_new_oids: &HashMap<Oid, Oid>,
+        ) -> Result<(), Error> {
+            let reflog_message = format!(
+                "regraph: update after editing commit {} -> {}",
+                old_edited_oid, new_edited_oid
+            );
+            for reference in resolved_refs_to_update {
+                let mut direct_ref = reference.resolve()?;
+                let old_oid = reference
+                    .target()
+                    .expect("Direct references should have a direct target");
+                if let Some(new_oid) = old_to_new_oids.get(&old_oid) {
+                    direct_ref.set_target(*new_oid, &reflog_message)?;
+                }
+            }
+            Ok(())
+        }
+
+        let mut old_to_new_oids = HashMap::new();
+
+        let edited_commit_oid = edit.create_edited_commit(self, &commit_to_edit)?;
+
+        if edited_commit_oid == commit_to_edit.id() {
+            return Err(Error::NoChange);
+        }
+
+        old_to_new_oids.insert(commit_to_edit.id(), edited_commit_oid);
+
+        let resolved_refs_to_update = refs_to_update.resolve(self)?;
+
+        let old_commit_oids =
+            discover_old_commits(self, &resolved_refs_to_update, edited_commit_oid)?;
+
+        update_affected_commits(self, &old_commit_oids, &mut old_to_new_oids)?;
+
+        update_refs(
+            &resolved_refs_to_update,
+            &commit_to_edit.id(),
+            &edited_commit_oid,
+            &old_to_new_oids,
+        )?;
 
         Ok(())
     }
