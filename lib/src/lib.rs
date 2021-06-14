@@ -318,7 +318,56 @@ mod tests {
     }
 
     #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
+    #[ignore]
+    fn it_update_notes() {
+        todo!();
+    }
+
+    #[test]
+    #[ignore]
+    fn it_can_leave_some_refs_untouched() {
+        todo!();
+    }
+
+    #[test]
+    #[ignore]
+    fn it_can_squash_some_commits() {
+        todo!();
+    }
+
+    #[test]
+    #[ignore]
+    fn it_can_change_authors() {
+        todo!();
+    }
+
+    #[test]
+    #[ignore]
+    fn it_can_change_committers() {
+        todo!();
+    }
+
+    #[test]
+    #[ignore]
+    fn it_can_swap_parents() {
+        todo!();
+    }
+
+    #[test]
+    #[ignore]
+    fn it_can_unsquash() {
+        todo!();
+    }
+
+    #[test]
+    #[ignore]
+    fn it_can_append_parents() {
+        todo!();
+    }
+
+    #[test]
+    #[ignore]
+    fn it_can_swap_trees() {
+        todo!();
     }
 }
