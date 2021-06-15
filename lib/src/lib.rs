@@ -1,17 +1,21 @@
+#![feature(backtrace)]
+
 use git2::{Commit, Oid, Reference, Repository, Signature, Sort, Tree};
-use std::collections::HashMap;
+use std::{backtrace::Backtrace, collections::HashMap};
+use thiserror::Error;
 
-#[derive(Debug)]
-pub enum Error {
-    Git2Error(git2::Error),
-    OriginalMessageNotValidUtf8,
+#[derive(Error, Debug)]
+pub enum RegraphError {
+    #[error("Failed to run git command")]
+    Git2Error {
+        #[from]
+        source: git2::Error,
+        backtrace: Backtrace,
+    },
+    #[error("Commit {commit} does not have a valid utf-8 message and could not be re-applied.")]
+    CommitWithInvalidUtf8Message { commit: Oid, backtrace: Backtrace },
+    #[error("The specified edit specification does not actually change the commit.")]
     NoChange,
-}
-
-impl From<git2::Error> for Error {
-    fn from(error: git2::Error) -> Self {
-        Error::Git2Error(error)
-    }
 }
 
 pub enum RefArg<'a> {
@@ -20,7 +24,7 @@ pub enum RefArg<'a> {
 }
 
 impl<'a> RefArg<'a> {
-    pub fn resolve(self, repo: &'a Repository) -> Result<Vec<Reference>, Error> {
+    pub fn resolve(self, repo: &'a Repository) -> Result<Vec<Reference>, RegraphError> {
         Ok(match self {
             RefArg::AllLocalRefs => repo.references()?.collect::<Result<_, _>>()?,
             RefArg::Refs(refs) => refs,
@@ -87,16 +91,21 @@ impl<'a> CommitEdit<'a> {
         self
     }
 
-    fn create_edited_commit(&self, repo: &Repository, original: &Commit) -> Result<Oid, Error> {
+    fn create_edited_commit(
+        &self,
+        repo: &Repository,
+        original: &Commit,
+    ) -> Result<Oid, RegraphError> {
         Ok(repo.commit(
             None,
             self.author.unwrap_or(&original.author()),
             self.committer.unwrap_or(&original.committer()),
-            self.message.unwrap_or(
-                original
-                    .message()
-                    .ok_or(Error::OriginalMessageNotValidUtf8)?,
-            ),
+            self.message.unwrap_or(original.message().ok_or(
+                RegraphError::CommitWithInvalidUtf8Message {
+                    commit: original.id(),
+                    backtrace: Backtrace::capture(),
+                },
+            )?),
             self.tree.unwrap_or(&original.tree()?),
             self.parents.unwrap_or(
                 &original
@@ -115,7 +124,7 @@ pub trait RepositoryExt {
         refs_to_update: RefArg,
         commit_to_edit: &Commit,
         edit: &CommitEdit,
-    ) -> Result<(), Error>;
+    ) -> Result<(), RegraphError>;
 }
 
 impl RepositoryExt for Repository {
@@ -124,18 +133,22 @@ impl RepositoryExt for Repository {
         refs_to_update: RefArg,
         commit_to_edit: &Commit,
         edit: &CommitEdit,
-    ) -> Result<(), Error> {
+    ) -> Result<(), RegraphError> {
         fn discover_old_commits(
             repo: &Repository,
             resolved_refs_to_update: &[Reference],
             edited_commit_oid: Oid,
-        ) -> Result<Vec<Oid>, Error> {
+        ) -> Result<Vec<Oid>, RegraphError> {
             let mut revwalk = repo.revwalk()?;
             revwalk.set_sorting(Sort::TOPOLOGICAL)?;
 
             for reference in resolved_refs_to_update.iter() {
-                let reference_name = reference.name().ok_or(Error::OriginalMessageNotValidUtf8)?;
-                revwalk.push_ref(reference_name)?;
+                revwalk.push(
+                    reference
+                        .resolve()?
+                        .target()
+                        .expect("Resolved reference should have a direct target"),
+                )?;
             }
             revwalk.hide(edited_commit_oid)?;
 
@@ -149,7 +162,7 @@ impl RepositoryExt for Repository {
             repo: &Repository,
             old_commit_oids: &[Oid],
             old_to_new_oids: &mut HashMap<Oid, Oid>,
-        ) -> Result<(), Error> {
+        ) -> Result<(), RegraphError> {
             for old_oid in old_commit_oids {
                 let commit = repo.find_commit(*old_oid)?;
 
@@ -169,7 +182,12 @@ impl RepositoryExt for Repository {
                         None,
                         &commit.author(),
                         &commit.committer(),
-                        commit.message().ok_or(Error::OriginalMessageNotValidUtf8)?,
+                        commit
+                            .message()
+                            .ok_or(RegraphError::CommitWithInvalidUtf8Message {
+                                commit: commit.id(),
+                                backtrace: Backtrace::capture(),
+                            })?,
                         &commit.tree()?,
                         &parents_ref,
                     )?;
@@ -185,7 +203,7 @@ impl RepositoryExt for Repository {
             old_edited_oid: &Oid,
             new_edited_oid: &Oid,
             old_to_new_oids: &HashMap<Oid, Oid>,
-        ) -> Result<(), Error> {
+        ) -> Result<(), RegraphError> {
             let reflog_message = format!(
                 "regraph: update after editing commit {} -> {}",
                 old_edited_oid, new_edited_oid
@@ -207,7 +225,7 @@ impl RepositoryExt for Repository {
         let edited_commit_oid = edit.create_edited_commit(self, &commit_to_edit)?;
 
         if edited_commit_oid == commit_to_edit.id() {
-            return Err(Error::NoChange);
+            return Err(RegraphError::NoChange);
         }
 
         old_to_new_oids.insert(commit_to_edit.id(), edited_commit_oid);
@@ -233,6 +251,7 @@ impl RepositoryExt for Repository {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Result;
     use git2::{Index, IndexAddOption, Oid, Sort, Time};
     use std::{collections::HashMap, fs::File, io::Write};
     use tempfile::{tempdir, TempDir};
@@ -240,7 +259,7 @@ mod tests {
     fn given_repository<'a>(
         graph: &[(&'a str, i64, &[&str])],
         branches: &[(&str, &str)],
-    ) -> (Repository, HashMap<&'a str, Oid>) {
+    ) -> Result<(Repository, HashMap<&'a str, Oid>)> {
         fn add_commit<'a, 'b>(
             dir: &TempDir,
             index: &'b mut Index,
@@ -248,27 +267,22 @@ mod tests {
             label: &str,
             time_sec: i64,
             parents: &[Commit],
-        ) -> Oid {
-            File::create(dir.path().join(label)).unwrap();
-            let mut shared = File::create(dir.path().join("shared")).unwrap();
-            writeln!(shared, "{}", label).unwrap();
-            index
-                .add_all(&["."], IndexAddOption::DEFAULT, None)
-                .unwrap();
+        ) -> Result<Oid> {
+            File::create(dir.path().join(label))?;
+            let mut shared = File::create(dir.path().join("shared"))?;
+            writeln!(shared, "{}", label)?;
+            index.add_all(&["."], IndexAddOption::DEFAULT, None)?;
             let email = format!("{}-email", label);
             let time = Time::new(time_sec, 0);
-            let author = Signature::new(&format!("{}-author", label), &email, &time).unwrap();
-            let committer = Signature::new(&format!("{}-comitter", label), &email, &time).unwrap();
-            let tree = repo
-                .find_tree(index.write_tree().map_err(|e| e.to_string()).unwrap())
-                .unwrap();
+            let author = Signature::new(&format!("{}-author", label), &email, &time)?;
+            let committer = Signature::new(&format!("{}-comitter", label), &email, &time)?;
+            let tree = repo.find_tree(index.write_tree()?)?;
             let parents_refs: Vec<&Commit> = parents.iter().collect();
-            repo.commit(None, &author, &committer, label, &tree, &parents_refs)
-                .unwrap()
+            Ok(repo.commit(None, &author, &committer, label, &tree, &parents_refs)?)
         }
-        let dir = tempdir().unwrap();
-        let repo = Repository::init(&dir).unwrap();
-        let mut index = repo.index().unwrap();
+        let dir = tempdir()?;
+        let repo = Repository::init(&dir)?;
+        let mut index = repo.index()?;
         let mut label_to_commit_oid = HashMap::new();
         for (label, time, parents) in graph {
             assert!(
@@ -278,46 +292,41 @@ mod tests {
 
             let mut parent_commits = Vec::new();
             for parent in *parents {
-                parent_commits.push(
-                    repo.find_commit(*label_to_commit_oid.get(parent).unwrap())
-                        .unwrap(),
-                );
+                parent_commits.push(repo.find_commit(*label_to_commit_oid.get(parent).unwrap())?);
             }
 
-            let commit_oid = add_commit(&dir, &mut index, &repo, label, *time, &parent_commits);
+            let commit_oid = add_commit(&dir, &mut index, &repo, label, *time, &parent_commits)?;
 
             label_to_commit_oid.insert(*label, commit_oid);
         }
         for (branch_name, target) in branches {
-            let commit = repo
-                .find_commit(*label_to_commit_oid.get(target).unwrap())
-                .unwrap();
-            repo.branch(branch_name, &commit, true).unwrap();
+            let commit = repo.find_commit(*label_to_commit_oid.get(target).unwrap())?;
+            repo.branch(branch_name, &commit, true)?;
         }
-        (repo, label_to_commit_oid)
+        Ok((repo, label_to_commit_oid))
     }
 
     fn label_to_commit_reachable_from_ref<'a>(
         repo: &'a Repository,
         reference: &str,
-    ) -> HashMap<String, Commit<'a>> {
+    ) -> Result<HashMap<String, Commit<'a>>> {
         let mut label_to_commit = HashMap::new();
 
-        let mut revwalk = repo.revwalk().unwrap();
-        revwalk.push_ref(reference).unwrap();
-        revwalk.set_sorting(Sort::TOPOLOGICAL).unwrap();
+        let mut revwalk = repo.revwalk()?;
+        revwalk.push_ref(reference)?;
+        revwalk.set_sorting(Sort::TOPOLOGICAL)?;
         for found_commit in revwalk {
-            let commit_oid = found_commit.unwrap();
-            let commit = repo.find_commit(commit_oid).unwrap();
+            let commit_oid = found_commit?;
+            let commit = repo.find_commit(commit_oid)?;
             let label = commit.message().unwrap().to_string();
             label_to_commit.insert(label, commit.clone());
         }
 
-        label_to_commit
+        Ok(label_to_commit)
     }
 
     #[test]
-    fn it_can_squash_to_root() {
+    fn it_can_squash_to_root() -> Result<()> {
         // GIVEN a repo...
         let (repo, label_to_commit_oid) = given_repository(
             &[
@@ -328,18 +337,15 @@ mod tests {
                 ("E", 4, &["D"]),      // With commit after merge.
             ],
             &[("master", "E")],
-        );
+        )?;
 
         // WHEN we squash B-C by removing parents of C.
         repo.regraph(
             RefArg::AllLocalRefs,
-            &repo
-                .find_commit(*label_to_commit_oid.get("C").unwrap())
-                .unwrap(),
+            &repo.find_commit(*label_to_commit_oid.get("C").unwrap())?,
             CommitEdit::new().edit_parents(&[]),
-        )
-        .unwrap();
-        let commits = label_to_commit_reachable_from_ref(&repo, "HEAD");
+        )?;
+        let commits = label_to_commit_reachable_from_ref(&repo, "HEAD")?;
 
         // THEN
         assert_eq!(
@@ -370,14 +376,14 @@ mod tests {
 
         // THEN
         assert_eq!(
-            commits.get("D").unwrap().parent_id(0).unwrap(),
+            commits.get("D").unwrap().parent_id(0)?,
             commits.get("A").unwrap().id(),
             "Commit 'D' should still have 'A' as its first parent."
         );
 
         // THEN
         assert_eq!(
-            commits.get("D").unwrap().parent_id(1).unwrap(),
+            commits.get("D").unwrap().parent_id(1)?,
             commits.get("C").unwrap().id(),
             "Commit 'D' should still have 'C' as its second parent."
         );
@@ -389,13 +395,14 @@ mod tests {
         for (label, commit) in commits.iter() {
             assert_eq!(
                 commit.tree_id(),
-                repo.find_commit(*label_to_commit_oid.get(label as &str).unwrap())
-                    .unwrap()
+                repo.find_commit(*label_to_commit_oid.get(label as &str).unwrap())?
                     .tree_id(),
                 "{}'s tree should be untouched",
                 label
             );
         }
+
+        Ok(())
     }
 
     #[test]
