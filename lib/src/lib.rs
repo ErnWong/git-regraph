@@ -244,7 +244,11 @@ impl RepositoryExt for Repository {
         let old_commit_oids =
             discover_old_commits(self, &resolved_refs_to_update, edited_commit_oid)?;
 
+        tracing::debug!("Commits we need to update: {:#?}", old_commit_oids);
+
         update_affected_commits(self, &old_commit_oids, &mut old_to_new_oids)?;
+
+        tracing::debug!("The following old commits have now been updated to the corresponding new commits: {:#?}", old_to_new_oids);
 
         update_refs(
             &resolved_refs_to_update,
