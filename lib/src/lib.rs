@@ -259,7 +259,7 @@ mod tests {
     fn given_repository<'a>(
         graph: &[(&'a str, i64, &[&str])],
         branches: &[(&str, &str)],
-    ) -> Result<(Repository, HashMap<&'a str, Oid>)> {
+    ) -> Result<(Repository, HashMap<&'a str, Oid>, TempDir)> {
         fn add_commit<'a, 'b>(
             dir: &TempDir,
             index: &'b mut Index,
@@ -303,7 +303,7 @@ mod tests {
             let commit = repo.find_commit(*label_to_commit_oid.get(target).unwrap())?;
             repo.branch(branch_name, &commit, true)?;
         }
-        Ok((repo, label_to_commit_oid))
+        Ok((repo, label_to_commit_oid, dir))
     }
 
     fn label_to_commit_reachable_from_ref<'a>(
@@ -328,7 +328,7 @@ mod tests {
     #[test]
     fn it_can_squash_to_root() -> Result<()> {
         // GIVEN a repo...
-        let (repo, label_to_commit_oid) = given_repository(
+        let (repo, label_to_commit_oid, _dir) = given_repository(
             &[
                 ("A", 0, &[]),         // With main root.
                 ("B", 1, &[]),         // With subtree root.
