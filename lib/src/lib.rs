@@ -494,8 +494,104 @@ mod tests {
 
     #[test]
     #[ignore]
-    fn it_update_notes() {
-        todo!();
+    fn it_update_notes() -> Result<()> {
+        fn add_note(
+            repo: &Repository,
+            label_to_commit_oid: &HashMap<&str, Oid>,
+            commit_label: &str,
+            time_sec: i64,
+        ) -> Result<()> {
+            let commit_oid = label_to_commit_oid.get(commit_label).unwrap();
+            let email = format!("{}-note-email", commit_label);
+            let time = Time::new(time_sec, 0);
+            let author = Signature::new(&format!("{}-note-author", commit_label), &email, &time)?;
+            let committer =
+                Signature::new(&format!("{}-note-comitter", commit_label), &email, &time)?;
+            let note = format!("{}-note-contents", commit_label);
+            repo.note(&author, &committer, None, *commit_oid, &note, false)?;
+            Ok(())
+        }
+
+        // GIVEN a repo...
+        let (repo, label_to_commit_oid, _dir) = given_repository(
+            &[
+                ("A", 0, &[]),    // With a commit that doesn't need updating.
+                ("B", 1, &["A"]), // With a commit to be edited.
+                ("C", 2, &["B"]), // With a commit to be updated.
+            ],
+            &[("master", "C")],
+        )?;
+
+        // GIVEN a note at each commit.
+        add_note(&repo, &label_to_commit_oid, "A", 3)?;
+        add_note(&repo, &label_to_commit_oid, "B", 4)?;
+        add_note(&repo, &label_to_commit_oid, "C", 5)?;
+
+        pause("Created repo")?;
+
+        // FIXME:
+        // GIVEN config.notes.rewrite = TRUE
+        // GIVEN config.notes.rewriteRef = refs/notes/commits
+
+        // WHEN a commit is edited with the AllLocalRefs flag.
+        repo.regraph(
+            RefArg::AllLocalRefs,
+            &repo.find_commit(*label_to_commit_oid.get("B").unwrap())?,
+            CommitEdit::new().edit_message("Edited message"),
+        )?;
+        pause("Regraph complete")?;
+        let commits = label_to_commit_reachable_from_ref(&repo, "HEAD")?;
+
+        // THEN the notes are updated to point to the new commits.
+        for (commit_label, note_date) in &[("A", 3), ("B", 4), ("C", 5)] {
+            let note = repo
+                .find_note(None, commits.get(*commit_label).unwrap().id())
+                .expect("New commit should have the old note");
+            assert_eq!(
+                note.message().unwrap(),
+                &format!("{}-note-contents", commit_label),
+                "Note for {} should have its message untouched",
+                commit_label,
+            );
+            assert_eq!(
+                note.author().email().unwrap(),
+                &format!("{}-note-email", commit_label),
+                "Note for {} should have its author email untouched",
+                commit_label,
+            );
+            assert_eq!(
+                note.author().name().unwrap(),
+                &format!("{}-note-author", commit_label),
+                "Note for {} should have its author name untouched",
+                commit_label,
+            );
+            assert_eq!(
+                note.author().when().seconds(),
+                *note_date,
+                "Note for {} should have its author date untouched",
+                commit_label,
+            );
+            assert_eq!(
+                note.committer().email().unwrap(),
+                &format!("{}-note-email", commit_label),
+                "Note for {} should have its committer email untouched",
+                commit_label,
+            );
+            assert_eq!(
+                note.committer().name().unwrap(),
+                &format!("{}-note-committer", commit_label),
+                "Note for {} should have its committer name untouched",
+                commit_label,
+            );
+            assert_eq!(
+                note.committer().when().seconds(),
+                *note_date,
+                "Note for {} should have its committer date untouched",
+                commit_label,
+            );
+        }
+
+        Ok(())
     }
 
     #[test]
