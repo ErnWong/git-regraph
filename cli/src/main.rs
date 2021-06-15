@@ -66,16 +66,19 @@ fn main() {
 
     let mut edit = CommitEdit::new();
 
-    let parents_edit = matches.values_of("parent").map(|parents| {
-        parents
-            .map(|revspec| {
-                repo.revparse_single(revspec)
-                    .unwrap()
-                    .into_commit()
-                    .expect("Specified PARENT is not a commit")
-            })
-            .collect::<Vec<Commit>>()
-    });
+    let parents_edit = matches
+        .is_present("clear-parents")
+        .then(Vec::new)
+        .or(matches.values_of("parent").map(|parents| {
+            parents
+                .map(|revspec| {
+                    repo.revparse_single(revspec)
+                        .unwrap()
+                        .into_commit()
+                        .expect("Specified PARENT is not a commit")
+                })
+                .collect::<Vec<Commit>>()
+        }));
     let parent_refs;
     if let Some(parents) = &parents_edit {
         parent_refs = parents.iter().collect::<Vec<&Commit>>();
