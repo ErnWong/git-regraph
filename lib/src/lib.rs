@@ -26,7 +26,16 @@ pub enum RefArg<'a> {
 impl<'a> RefArg<'a> {
     pub fn resolve(self, repo: &'a Repository) -> Result<Vec<Reference>, RegraphError> {
         Ok(match self {
-            RefArg::AllLocalRefs => repo.references()?.collect::<Result<_, _>>()?,
+            RefArg::AllLocalRefs => repo
+                .references()?
+                .filter(|reference_result| {
+                    if let Ok(reference) = reference_result {
+                        !reference.is_remote()
+                    } else {
+                        true
+                    }
+                })
+                .collect::<Result<_, _>>()?,
             RefArg::Refs(refs) => refs,
         })
     }
