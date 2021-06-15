@@ -256,6 +256,7 @@ mod tests {
     use git2::{Index, IndexAddOption, Oid, Sort, Time};
     use std::{collections::HashMap, fs::File, io::Write};
     use tempfile::{tempdir, TempDir};
+    use test_env_log::test;
 
     fn given_repository<'a>(
         graph: &[(&'a str, i64, &[&str])],
