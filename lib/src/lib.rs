@@ -252,6 +252,7 @@ impl RepositoryExt for Repository {
 mod tests {
     use super::*;
     use anyhow::Result;
+    use crossterm::event::{read, Event};
     use git2::{Index, IndexAddOption, Oid, Sort, Time};
     use std::{collections::HashMap, fs::File, io::Write};
     use tempfile::{tempdir, TempDir};
@@ -325,6 +326,12 @@ mod tests {
         Ok(label_to_commit)
     }
 
+    fn pause(message: &str) -> Result<()> {
+        println!("{} [Press any key to continue]", message);
+        while !matches!(read()?, Event::Key(_)) {}
+        Ok(())
+    }
+
     #[test]
     fn it_can_squash_to_root() -> Result<()> {
         // GIVEN a repo...
@@ -338,6 +345,7 @@ mod tests {
             ],
             &[("master", "E")],
         )?;
+        pause("Created repo")?;
 
         // WHEN we squash B-C by removing parents of C.
         repo.regraph(
@@ -345,6 +353,7 @@ mod tests {
             &repo.find_commit(*label_to_commit_oid.get("C").unwrap())?,
             CommitEdit::new().edit_parents(&[]),
         )?;
+        pause("Regraph complete")?;
         let commits = label_to_commit_reachable_from_ref(&repo, "HEAD")?;
 
         // THEN
