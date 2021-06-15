@@ -418,13 +418,73 @@ mod tests {
         // THEN
         assert!(commits.contains_key("E"), "Commit 'E' is updated");
 
-        // THEN all commits should still have the same trees.
-        for (label, commit) in commits.iter() {
+        // THEN all commits should still have the same trees and signatures.
+        for (label, new_commit) in commits.iter() {
+            let old_commit = repo.find_commit(*label_to_commit_oid.get(label as &str).unwrap())?;
             assert_eq!(
-                commit.tree_id(),
-                repo.find_commit(*label_to_commit_oid.get(label as &str).unwrap())?
-                    .tree_id(),
+                new_commit.tree_id(),
+                old_commit.tree_id(),
                 "{}'s tree should be untouched",
+                label
+            );
+            assert_eq!(
+                new_commit.author().email().unwrap(),
+                old_commit.author().email().unwrap(),
+                "{}'s author email should be untouched",
+                label
+            );
+            assert_eq!(
+                new_commit.author().name().unwrap(),
+                old_commit.author().name().unwrap(),
+                "{}'s author name should be untouched",
+                label
+            );
+            assert_eq!(
+                new_commit.author().when().seconds(),
+                old_commit.author().when().seconds(),
+                "{}'s author date should be untouched",
+                label
+            );
+            assert_eq!(
+                new_commit.author().when().offset_minutes(),
+                old_commit.author().when().offset_minutes(),
+                "{}'s author date should be untouched",
+                label
+            );
+            assert_eq!(
+                new_commit.author().when().sign(),
+                old_commit.author().when().sign(),
+                "{}'s author date should be untouched",
+                label
+            );
+            assert_eq!(
+                new_commit.committer().email().unwrap(),
+                old_commit.committer().email().unwrap(),
+                "{}'s committer email should be untouched",
+                label
+            );
+            assert_eq!(
+                new_commit.committer().name().unwrap(),
+                old_commit.committer().name().unwrap(),
+                "{}'s committer name should be untouched",
+                label
+            );
+            assert_eq!(
+                new_commit.committer().when().seconds(),
+                old_commit.committer().when().seconds(),
+                "{}'s committer date should be untouched",
+                label
+            );
+            assert_eq!(
+                new_commit.committer().when().offset_minutes(),
+                old_commit.committer().when().offset_minutes(),
+                "{}'s committer date should be untouched",
+                label
+            );
+            assert_eq!(
+                new_commit.committer().when().sign(),
+                old_commit.committer().when().sign(),
+                "{}'s committer date should be untouched",
                 label
             );
         }
