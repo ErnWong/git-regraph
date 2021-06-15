@@ -337,8 +337,10 @@ mod tests {
     }
 
     fn pause(message: &str) -> Result<()> {
-        println!("{} [Press any key to continue]", message);
-        while !matches!(read()?, Event::Key(_)) {}
+        if std::env::var("PAUSE").is_ok() {
+            println!("{} [Press any key to continue]", message);
+            while !matches!(read()?, Event::Key(_)) {}
+        }
         Ok(())
     }
 
