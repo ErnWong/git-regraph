@@ -149,7 +149,7 @@ impl RepositoryExt for Repository {
             edited_commit_oid: Oid,
         ) -> Result<Vec<Oid>, RegraphError> {
             let mut revwalk = repo.revwalk()?;
-            revwalk.set_sorting(Sort::TOPOLOGICAL)?;
+            revwalk.set_sorting(Sort::TOPOLOGICAL | Sort::REVERSE)?;
 
             for reference in resolved_refs_to_update.iter() {
                 revwalk.push(
@@ -329,7 +329,9 @@ mod tests {
 
         let mut revwalk = repo.revwalk()?;
         revwalk.push_ref(reference)?;
-        revwalk.set_sorting(Sort::TOPOLOGICAL)?;
+
+        revwalk.set_sorting(Sort::TOPOLOGICAL | Sort::REVERSE)?;
+
         for found_commit in revwalk {
             let commit_oid = found_commit?;
             let commit = repo.find_commit(commit_oid)?;
